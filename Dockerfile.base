@@ -1,0 +1,27 @@
+ARG IMAGE_PREFIX
+# Change version according to your project needs
+FROM ${IMAGE_PREFIX}/node:20-alpine
+
+# Change the following line according to your project structure
+
+# RUN apk add --no-cache git openssh=9.9_p1-r2 libc6-compat=1.1.0-r4
+RUN apk add --no-cache git openssh libc6-compat=1.1.0-r4
+
+WORKDIR /app
+
+# Remove entrypoint.sh if not using Approach 1 (from README)
+
+# PNPM versions
+# RUN corepack enable && corepack prepare pnpm@latest --activate
+# COPY package.json pnpm-lock.yaml entrypoint.sh ./
+# RUN pnpm install --no-frozen-lockfile --prefer-offline
+
+# NPM versions
+COPY package.json package-lock.json entrypoint.sh ./
+COPY .npmrc ./
+RUN npm install --prefer-offline --legacy-peer-deps
+
+# Remove .npmrc after installation for security
+RUN rm .npmrc
+
+USER node

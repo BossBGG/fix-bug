@@ -1,0 +1,111 @@
+﻿# TODO: change 0.0.1 to dynamic variable that can be replaced by the backstage (if there are more than 1 version)
+include:
+  - project: "developer/share/ci"
+    ref: next.js-0.0.1
+    file: "build-base.yml"
+  - project: "developer/share/ci"
+    ref: next.js-0.0.1
+    file: "build.yml"
+  - project: "developer/share/ci"
+    ref: next.js-0.0.1
+    file: "sqa-sonarqube.yml"
+  - project: "developer/share/ci"
+    ref: next.js-0.0.1
+    file: "sqa-dependency-check.yml"
+  - project: "developer/share/ci"
+    ref: next.js-0.0.1
+    file: "sqa-trivy.yml"
+  - project: "developer/share/ci"
+    ref: next.js-0.0.1
+    file: "artifact.yml"
+  - project: "developer/share/ci"
+    ref: next.js-0.0.1
+    file: "update-deployment-template.yml"
+  - project: "developer/share/ci"
+    ref: next.js-0.0.1
+    file: "tag-uat.yml"
+  - project: "developer/share/ci"
+    ref: next.js-0.0.1
+    file: "tag-production.yml"
+
+#* Example:
+#* values_file_path => web/main-web
+#* group => todlong
+variables:
+  IMAGE_REPOSITORY: "${CI_REGISTRY_IMAGE}"
+  VALUES_FILE_PATH: "web/wom-y3-web-fe"
+  DOWNSTREAM_DEPLOYMENT_PATH: developer/wom-y3/deployment
+  UPSTREAM_IMAGE_REPOSITORY: "${CI_REGISTRY_IMAGE}"
+
+stages:
+  - build-base
+  - build
+  - sqa
+  - artifact
+  - update-deployment
+  - tag-uat
+  - update-deployment-uat
+  - tag-production
+  - update-deployment-production
+
+workflow:
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+    - if: "$CI_COMMIT_TAG"
+
+update-deployment-dev:
+  extends: .update-deployment-template-dev
+  variables:
+    UPSTREAM_VALUES_FILE_FULL_PATH: "${VALUES_FILE_PATH}/values.dev.yml"
+
+update-deployment-uat:
+  extends: .update-deployment-template-uat
+  variables:
+    UPSTREAM_VALUES_FILE_FULL_PATH: "${VALUES_FILE_PATH}/values.uat.yml"
+
+update-deployment-production:
+  extends: .update-deployment-template-production
+  variables:
+    UPSTREAM_VALUES_FILE_FULL_PATH: "${VALUES_FILE_PATH}/values.prod.yml"
+
+# --- Overriding CI/CD stages ---
+build-base:
+  stage: build-base
+  tags: ["shared"]
+  image: docker:24.0.5
+  before_script:
+    - echo "Creating dynamic .npmrc for Font Awesome Pro..."
+    - echo "@fortawesome:registry=https://npm.fontawesome.com/" > .npmrc
+    - echo "//npm.fontawesome.com/:_authToken=${FONTAWESOME_NPM_TOKEN}" >> .npmrc
+    - echo "$CI_DEPENDENCY_PROXY_PASSWORD" | docker login $CI_DEPENDENCY_PROXY_SERVER -u $CI_DEPENDENCY_PROXY_USER --password-stdin
+  script:
+    - echo "$CI_REGISTRY_PASSWORD" | docker login $CI_REGISTRY -u $CI_REGISTRY_USER --password-stdin
+    - docker system info
+    - docker build --build-arg IMAGE_PREFIX=${CI_DEPENDENCY_PROXY_DIRECT_GROUP_IMAGE_PREFIX} -f Dockerfile.base -t $CI_REGISTRY_IMAGE/base:$CI_COMMIT_SHORT_SHA .
+    - docker tag $CI_REGISTRY_IMAGE/base:$CI_COMMIT_SHORT_SHA $CI_REGISTRY_IMAGE/base:stable
+    - docker push $CI_REGISTRY_IMAGE/base:$CI_COMMIT_SHORT_SHA
+    - docker push $CI_REGISTRY_IMAGE/base:stable
+  except:
+    - tags
+
+build:
+  stage: build
+  image:
+    name: registry.pea.co.th/public-assets/images/nerdctl:latest
+  before_script:
+    - export CONTAINERD_ADDRESS="/run/containerd/containerd.sock"
+    - sudo -b buildkitd
+    - nerdctl system prune -a -f --volumes
+    - echo "$CI_DEPENDENCY_PROXY_PASSWORD" | nerdctl login $CI_DEPENDENCY_PROXY_SERVER -u $CI_DEPENDENCY_PROXY_USER --password-stdin
+  script:
+    - echo "$CI_REGISTRY_PASSWORD" | nerdctl login $CI_REGISTRY -u $CI_REGISTRY_USER --password-stdin
+    - mkdir -p ./assets
+    # Pass NEXT_PUBLIC_APP_BASE_URL as a build argument
+    - nerdctl build --build-arg NEXT_PUBLIC_APP_BASE_URL=${NEXT_PUBLIC_APP_BASE_URL} --build-arg IMAGE_PREFIX=${CI_REGISTRY_IMAGE} --build-arg PROXY_IMAGE_PREFIX=${CI_DEPENDENCY_PROXY_DIRECT_GROUP_IMAGE_PREFIX} -f Dockerfile -t $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA .
+    - nerdctl save -o ./assets/$CI_PROJECT_NAME.tar $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA
+  cache:
+    key: "${CI_COMMIT_SHORT_SHA}"
+    paths:
+      - ./assets
+  except:
+    - tags
